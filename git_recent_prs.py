@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint:disable=broad-except,consider-using-f-string,import-error,invalid-name,missing-module-docstring,missing-function-docstring,undefined-loop-variable
 
 from argparse import ArgumentParser, ArgumentError
 from datetime import datetime, timedelta
@@ -62,9 +63,10 @@ except ArgumentError as arg_e:
     print(f'Catching an argumentError: {arg_e}')
     exit(-1)
 
-# arg vars
-repo_name   = args.repo
+# globals
 repo_owner  = args.owner
+repo_name   = args.repo
+repo        = f"{repo_owner}/{repo_name}"
 smtp_server = args.server
 smtp_port   = args.port
 smtp_user   = args.username
@@ -72,7 +74,7 @@ smtp_pass   = args.password
 smtp_to     = args.recipient
 
 
-def send_email(body, repo=f'{repo_owner}/{repo_name}'):
+def send_email(body):
     """Send an email over SSL using the defined SMTP server connection info & credentials."""
 
     msg = EmailMessage()
@@ -90,18 +92,19 @@ def send_email(body, repo=f'{repo_owner}/{repo_name}'):
         print('Email sent!')
     except Exception as email_e:
         print(f'Something went wrong...: {email_e}')
+        exit(-1)
 
-def get_response(state, page, sort, n):
+def get_response(state, sort, page, n):
     """Query the GitHub REST API for pull request results."""
 
     token     = os.getenv('GITHUB_OAUTH_TOKEN')
-    query_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/pulls"
+    query_url = f"https://api.github.com/repos/{repo}/pulls"
     headers   = {'Authorization': f'token {token}'}
     params    = {
         "state": state,
-        "per_page": n,
-        "page": page,
         "sort": sort,
+        "page": page,
+        "per_page": n,
         "direction": "desc"
     }
     return requests.get(query_url, headers=headers, params=params)
@@ -112,38 +115,36 @@ def get_prs_postfilter():
     different query parameters ("open" or "closed") and different sort options ("created_at" or
     "updated_at").
 
-    Perform post-filtering on either "created_at" or "updated_at" for results in the last 7 days,
-    depending on query type.
+    Perform post-filtering on either the "created_at" or "updated_at" keys for results in the last
+    week, depending on query type.
     """
 
     results = ""
 
-    def pull_page(m, results=results, page=1, n=20, idx=1):
-        r = get_response(m[0], page, m[2], n)
+    def pull_page(params, results=results, page=1, n=20, idx=1):
+        r = get_response(params[1], params[2], page, n)
 
         for i, pr in enumerate(r.json(), start=idx):
-            pr_dt = datetime.strptime(pr[m[1]], "%Y-%m-%dT%H:%M:%SZ")
-            # If date is within the last week
+            pr_dt = datetime.strptime(pr[params[0]], "%Y-%m-%dT%H:%M:%SZ")
+            # If date is within the last week add to results list
             if pr_dt >= datetime.now() + timedelta(days=-7):
-                # Add to results list
-                results = results + "Request: #{} - {} \n{} Time: {}\n\n".format(
-                    pr["number"], pr["title"], pr_type, pr[m[1]]
-                )
+                results = results + \
+                    f"Request: #{pr['number']} - {pr['title']} \n{pr_type} Time: {pr[pr_params[0]]}\n\n"
                 # Query for next page of results if end is reached
-                if i == n*page:
+                if i == n * page:
                     page += 1
                     idx += n
-                    pull_page(m, results, page, n, idx)
+                    pull_page(params, results, page, n, idx)
 
         return results
 
     query_map = {
-        "Created": ("open", "created_at", "created"),
-        "In Progress": ("open", "updated_at", "updated"),
-        "Closed": ("closed", "closed_at", "updated")
+        "Created": ("created_at", "open", "created"),
+        "In Progress": ("updated_at", "open", "updated"),
+        "Closed": ("closed_at", "closed", "updated")
     }
     for pr_type, pr_params in query_map.items():
-        results = results + f"*{pr_type} Pull Requests*\n"
+        results = results + f"**{pr_type} Pull Requests**\n"
         results = results + pull_page(pr_params) + '\n'
 
     return results
@@ -153,3 +154,4 @@ if __name__ == '__main__':
         send_email(get_prs_postfilter())
     except Exception as e:
         print(e)
+        exit(-1)
