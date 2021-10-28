@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# pylint:disable=broad-except,consider-using-f-string,import-error,invalid-name,missing-module-docstring,missing-function-docstring,undefined-loop-variable
 
 from argparse import ArgumentParser, ArgumentError
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
 import os
+import sys
 import smtplib
 import requests
 
@@ -61,7 +61,7 @@ try:
     args = parser.parse_args()
 except ArgumentError as arg_e:
     print(f'Catching an argumentError: {arg_e}')
-    exit(-1)
+    sys.exit(-1)
 
 # globals
 repo_owner  = args.owner
@@ -92,7 +92,7 @@ def send_email(body):
         print('Email sent!')
     except Exception as email_e:
         print(f'Something went wrong...: {email_e}')
-        exit(-1)
+        sys.exit(-1)
 
 def get_response(state, sort, page, n):
     """Query the GitHub REST API for pull request results."""
@@ -154,4 +154,4 @@ if __name__ == '__main__':
         send_email(get_prs_postfilter())
     except Exception as e:
         print(e)
-        exit(-1)
+        sys.exit(-1)
