@@ -2,10 +2,11 @@
 
 from argparse import ArgumentParser, ArgumentError
 from datetime import datetime, timedelta
-from email.message import EmailMessage
+from email.mime.text import MIMEText
 
 import os
 import sys
+import ssl
 import smtplib
 import requests
 
@@ -77,19 +78,20 @@ smtp_to     = args.recipient
 def send_email(body):
     """Send an email over SSL using the defined SMTP server connection info & credentials."""
 
-    msg = EmailMessage()
+    message = f"{body}"
 
+    msg = MIMEText(message, "plain")
     msg['To']      = smtp_to
     msg['From']    = smtp_user
     msg['Subject'] = f"Weekly Update: GitHub Pull Requests for {repo}"
-    msg.set_content(body)
 
     try:
-        s = smtplib.SMTP_SSL(smtp_server, smtp_port)
-        s.login(smtp_user, smtp_pass)
-        s.send_message(msg)
-        s.quit()
-        print('Email sent!')
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as s:
+            s.login(smtp_user, smtp_pass)
+            s.sendmail(smtp_user, smtp_to, msg.as_string())
+            s.quit()
+            print('Email sent!')
     except Exception as email_e:
         print(f'Something went wrong...: {email_e}')
         sys.exit(-1)
