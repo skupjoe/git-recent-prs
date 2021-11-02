@@ -17,9 +17,9 @@ def env_or_required(key):
         else {'required': True}
     )
 parser = ArgumentParser(
-        description="""Produces a summary of all opened, closed, and in progress pull requests in
-        the last week for a given public repository & sends the results to a configurable email
-        address.""",
+        description="""Produces a summary of all opened, closed, and in progress
+        pull requests in the last week for a given public repository & sends the
+        results to a configurable email address.""",
         exit_on_error=False
 )
 parser.add_argument(
@@ -56,13 +56,14 @@ parser.add_argument(
                     '-r', '--recipient',
                     metavar='RECIPIENT',
                      **env_or_required('SMTP_RECIPIENT'),
-                    help="""The recipient email address to be included as the
-                    To: header value.""")
+                    help="""The recipient email address to be included as
+                    the To: header value.""")
 try:
     args = parser.parse_args()
 except ArgumentError as arg_e:
     print(f'Catching an argumentError: {arg_e}')
     sys.exit(-1)
+
 
 # globals
 repo_owner  = args.owner
@@ -75,12 +76,84 @@ smtp_pass   = args.password
 smtp_to     = args.recipient
 
 
-def send_email(body):
-    """Send an email over SSL using the defined SMTP server connection info & credentials."""
+def to_html(results):
+    """ Formats results list data as an HTML table. Extracts table
+    columns from pr_data selections.
+    """
 
-    message = f"{body}"
+    sections = ""
+    pr_data = {
+        "#": "number",
+        "Title": "title",
+        "URL": "url",
+    }
 
-    msg = MIMEText(message, "plain")
+    # Create table header html block. Column titles from pr_data keys
+    th = ""
+    for k in pr_data:
+        th = th + f"<th>{k}</th>\n"
+    th_block = f"""\
+    <tr>
+        {th}
+    </tr>
+    """
+
+    # Create table data html blocks. Divide into sections for "open",
+    # "in-progress", & "closed"
+    for pr_type, pr_list in results.items():
+        td_block = ""
+        section_header = f"<h2>{pr_type} Pull Requests</h2>"
+
+        for pr in pr_list:
+            td = ""
+            # add table cells
+            for v in pr_data.values():
+                td = td + f"<td>{pr[v]}</td>\n"
+            # add table data block
+            td_block = td_block + f"""\
+            <tr>
+                {td}
+            </tr>
+            """
+
+        sections = sections + \
+                """
+                %s
+                <table>
+                    %s
+                    %s
+                </table>
+                """ % (section_header, th_block, td_block)
+
+    html = f"""\
+    <!DOCTYPE html>
+    <html>
+        <head>
+            <style>
+                table, th, td {{
+                    border: 1px solid black;
+                    border-collapse: collapse;
+                }}
+                th, td {{
+                    padding: 5px;
+                    text-align: left;
+                }}
+            </style>
+        </head>
+        <body>
+            {sections}
+        </body>
+    </html>
+    """
+
+    return html
+
+def send_email(str_msg):
+    """Sends an email over SSL using the defined SMTP server connection
+    info & credentials.
+    """
+
+    msg = MIMEText(str_msg, "html")
     msg['To']      = smtp_to
     msg['From']    = smtp_user
     msg['Subject'] = f"Weekly Update: GitHub Pull Requests for {repo}"
@@ -96,8 +169,9 @@ def send_email(body):
         print(f'Something went wrong...: {email_e}')
         sys.exit(-1)
 
+
 def get_response(state, sort, page, n):
-    """Query the GitHub REST API for pull request results."""
+    """Queries the GitHub REST API for pull request results."""
 
     token     = os.getenv('GITHUB_OAUTH_TOKEN')
     query_url = f"https://api.github.com/repos/{repo}/pulls"
@@ -109,51 +183,56 @@ def get_response(state, sort, page, n):
         "per_page": n,
         "direction": "desc"
     }
+
     return requests.get(query_url, headers=headers, params=params)
 
 
 def get_prs_postfilter():
-    """Perform a query for each type of pull request ("Created", "In Progress", "Closed") with
-    different query parameters ("open" or "closed") and different sort options ("created_at" or
-    "updated_at").
+    """Performs a query for each pr_type of pull request ("Created",
+    "In Progress", "Closed") with different query parameters ("open" or
+    "closed") and different sort options ("created_at" or "updated_at").
 
-    Perform post-filtering on either the "created_at" or "updated_at" keys for results in the last
-    week, depending on query type.
+    Performs post-filtering on either the "created_at" or "updated_at"
+    keys for results in the last week, depending on the pr_type of the
+    query.
     """
 
-    results = ""
+    def pull_page(params, results, page=1, n=20, idx=1):
+        results = []
 
-    def pull_page(params, results=results, page=1, n=20, idx=1):
         r = get_response(params[1], params[2], page, n)
 
         for i, pr in enumerate(r.json(), start=idx):
             pr_dt = datetime.strptime(pr[params[0]], "%Y-%m-%dT%H:%M:%SZ")
             # If date is within the last week add to results list
             if pr_dt >= datetime.now() + timedelta(days=-7):
-                results = results + \
-                    f"Request: #{pr['number']} - {pr['title']} \n{pr_type} Time: {pr[pr_params[0]]}\n\n"
+                results.append(pr)
                 # Query for next page of results if end is reached
                 if i == n * page:
                     page += 1
                     idx += n
                     pull_page(params, results, page, n, idx)
-
         return results
 
+
+    results_dict = {}
     query_map = {
         "Created": ("created_at", "open", "created"),
         "In Progress": ("updated_at", "open", "updated"),
         "Closed": ("closed_at", "closed", "updated")
     }
-    for pr_type, pr_params in query_map.items():
-        results = results + f"**{pr_type} Pull Requests**\n"
-        results = results + pull_page(pr_params) + '\n'
 
-    return results
+    # pull page for each pr_type and store results for that type
+    for pr_type, query_params in query_map.items():
+        results = []
+        results_dict[pr_type] = pull_page(query_params, results)
+
+    return results_dict
+
 
 if __name__ == '__main__':
     try:
-        send_email(get_prs_postfilter())
+        send_email(to_html(get_prs_postfilter()))
     except Exception as e:
         print(e)
         sys.exit(-1)
